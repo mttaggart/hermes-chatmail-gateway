@@ -24,11 +24,11 @@ This installs both the `deltachat2` client library and the `deltachat-rpc-server
 
 ### 2. Install the plugin
 
-Copy `plugin.yaml` and `adapter.py` into your Hermes plugins directory:
+Copy the `chatmail/` directory contents into your Hermes plugins directory:
 
 ```bash
 mkdir -p ~/.hermes/plugins/chatmail
-cp plugin.yaml adapter.py ~/.hermes/plugins/chatmail/
+cp chatmail/__init__.py chatmail/adapter.py chatmail/plugin.yaml ~/.hermes/plugins/chatmail/
 ```
 
 ### 3. Configure the bot account

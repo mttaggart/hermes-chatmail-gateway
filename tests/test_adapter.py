@@ -274,7 +274,7 @@ class TestAdapterConstruction:
 
     def test_construction_with_env(self, make_adapter):
         """Adapter should read addr/password from env vars."""
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
         config = make_adapter(addr="bot@testrun.org", password="pass123")
         adapter = ChatmailAdapter(config)
         assert adapter._addr == "bot@testrun.org"
@@ -284,7 +284,7 @@ class TestAdapterConstruction:
     def test_construction_with_extra(self, clean_secrets):
         """Adapter should read addr/password from config.extra dict."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
         config = PlatformConfig(extra={"addr": "extra@testrun.org", "password": "extrapass"})
         adapter = ChatmailAdapter(config)
         assert adapter._addr == "extra@testrun.org"
@@ -293,7 +293,7 @@ class TestAdapterConstruction:
     def test_construction_defaults(self, clean_secrets):
         """Adapter should have empty addr/password when nothing is configured."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
         config = PlatformConfig()
         adapter = ChatmailAdapter(config)
         assert adapter._addr == ""
@@ -305,7 +305,7 @@ class TestAdapterConstruction:
         """Adapter should read custom accounts dir from env."""
         from gateway.platforms._shared import set_scoped_secret
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
         set_scoped_secret("CHATMAIL_ADDR", "bot@testrun.org")
         set_scoped_secret("CHATMAIL_PASSWORD", "pass")
         set_scoped_secret("CHATMAIL_ACCOUNTS_DIR", "/tmp/custom-dc")
@@ -318,25 +318,25 @@ class TestCheckRequirements:
     """Tests for the check_requirements function."""
 
     def test_requirements_met(self, chatmail_env):
-        from adapter import check_requirements
+        from chatmail.adapter import check_requirements
         assert check_requirements() is True
 
     def test_requirements_missing_password(self, clean_secrets):
         from gateway.platforms._shared import set_scoped_secret
-        from adapter import check_requirements
+        from chatmail.adapter import check_requirements
         set_scoped_secret("CHATMAIL_ADDR", "bot@testrun.org")
         # No password set
         assert check_requirements() is False
 
     def test_requirements_missing_addr(self, clean_secrets):
         from gateway.platforms._shared import set_scoped_secret
-        from adapter import check_requirements
+        from chatmail.adapter import check_requirements
         set_scoped_secret("CHATMAIL_PASSWORD", "pass")
         # No addr set
         assert check_requirements() is False
 
     def test_requirements_nothing_set(self, clean_secrets):
-        from adapter import check_requirements
+        from chatmail.adapter import check_requirements
         assert check_requirements() is False
 
 
@@ -345,18 +345,18 @@ class TestValidateConfig:
 
     def test_valid_config_with_env(self, chatmail_env):
         from gateway.config import PlatformConfig
-        from adapter import validate_config
+        from chatmail.adapter import validate_config
         assert validate_config(PlatformConfig()) is True
 
     def test_valid_config_with_extra(self, clean_secrets):
         from gateway.config import PlatformConfig
-        from adapter import validate_config
+        from chatmail.adapter import validate_config
         config = PlatformConfig(extra={"addr": "bot@testrun.org", "password": "pass"})
         assert validate_config(config) is True
 
     def test_invalid_config(self, clean_secrets):
         from gateway.config import PlatformConfig
-        from adapter import validate_config
+        from chatmail.adapter import validate_config
         assert validate_config(PlatformConfig()) is False
 
 
@@ -364,19 +364,19 @@ class TestEnvEnablement:
     """Tests for the _env_enablement function."""
 
     def test_env_enablement_seeds_addr_password(self, chatmail_env):
-        from adapter import _env_enablement
+        from chatmail.adapter import _env_enablement
         result = _env_enablement()
         assert result is not None
         assert result["addr"] == "bot@testrun.org"
         assert result["password"] == "secret123"
 
     def test_env_enablement_returns_none_when_unconfigured(self, clean_secrets):
-        from adapter import _env_enablement
+        from chatmail.adapter import _env_enablement
         assert _env_enablement() is None
 
     def test_env_enablement_seeds_accounts_dir(self, chatmail_env):
         from gateway.platforms._shared import set_scoped_secret
-        from adapter import _env_enablement
+        from chatmail.adapter import _env_enablement
         set_scoped_secret("CHATMAIL_ACCOUNTS_DIR", "/tmp/test-accounts")
         result = _env_enablement()
         assert result is not None
@@ -390,7 +390,7 @@ class TestConnect:
     async def test_connect_fails_without_config(self, clean_secrets):
         """connect() should fail with non-retryable error when addr/password missing."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
         adapter = ChatmailAdapter(PlatformConfig())
         result = await adapter.connect()
         assert result is False
@@ -402,7 +402,7 @@ class TestConnect:
     async def test_connect_succeeds_with_config(self, chatmail_env):
         """connect() should succeed and mark connected when properly configured."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         # Patch IOTransport and Rpc to use mocks
         with patch("deltachat2.IOTransport", MockIOTransport), \
@@ -426,7 +426,7 @@ class TestConnect:
         """connect() should configure a new account if not already configured."""
         from gateway.platforms._shared import set_scoped_secret
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         set_scoped_secret("CHATMAIL_ADDR", "newbot@testrun.org")
         set_scoped_secret("CHATMAIL_PASSWORD", "newpass")
@@ -457,7 +457,7 @@ class TestDisconnect:
     async def test_disconnect_cleans_up(self, chatmail_env):
         """disconnect() should stop the bot, close transport, and mark disconnected."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         with patch("deltachat2.IOTransport", MockIOTransport), \
              patch("deltachat2.Rpc", MockRpc), \
@@ -482,7 +482,7 @@ class TestSend:
     async def test_send_text_message(self, chatmail_env):
         """send() should send a text message and return a SendResult."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         mock_rpc = MockRpc()
 
@@ -507,7 +507,7 @@ class TestSend:
     async def test_send_not_connected(self, clean_secrets):
         """send() should fail when not connected."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
         adapter = ChatmailAdapter(PlatformConfig())
         result = await adapter.send("200", "test")
         assert result.success is False
@@ -521,7 +521,7 @@ class TestGetChatInfo:
     async def test_get_chat_info_dm(self, chatmail_env):
         """get_chat_info should return correct info for a DM chat."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         mock_rpc = MockRpc()
 
@@ -544,7 +544,7 @@ class TestGetChatInfo:
     async def test_get_chat_info_group(self, chatmail_env):
         """get_chat_info should return correct info for a group chat."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         mock_rpc = MockRpc()
 
@@ -570,7 +570,7 @@ class TestInboundMessage:
     async def test_on_new_message_filters_self(self, chatmail_env):
         """The hook should skip messages from SELF."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         with patch("deltachat2.IOTransport", MockIOTransport), \
              patch("deltachat2.Rpc", MockRpc), \
@@ -598,7 +598,7 @@ class TestInboundMessage:
     async def test_on_new_message_filters_info(self, chatmail_env):
         """The hook should skip info/system messages."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         with patch("deltachat2.IOTransport", MockIOTransport), \
              patch("deltachat2.Rpc", MockRpc), \
@@ -623,7 +623,7 @@ class TestInboundMessage:
     async def test_on_new_message_dispatches_user_message(self, chatmail_env):
         """The hook should dispatch legitimate user messages to handle_message."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         # Track the event dispatched to handle_message
         received_events = []
@@ -661,7 +661,7 @@ class TestInboundMessage:
     async def test_on_new_message_deduplicates(self, chatmail_env):
         """The hook should skip duplicate messages."""
         from gateway.config import PlatformConfig
-        from adapter import ChatmailAdapter
+        from chatmail.adapter import ChatmailAdapter
 
         received_events = []
 
@@ -699,7 +699,7 @@ class TestStandaloneSend:
     async def test_standalone_send_missing_config(self, clean_secrets):
         """_standalone_send should error when config is missing."""
         from gateway.config import PlatformConfig
-        from adapter import _standalone_send
+        from chatmail.adapter import _standalone_send
         result = await _standalone_send(PlatformConfig(), "200", "test message")
         assert "error" in result
         assert "CHATMAIL_ADDR" in result["error"]
@@ -708,7 +708,7 @@ class TestStandaloneSend:
     async def test_standalone_send_invalid_chat_id(self, chatmail_env):
         """_standalone_send should error on non-numeric chat_id."""
         from gateway.config import PlatformConfig
-        from adapter import _standalone_send
+        from chatmail.adapter import _standalone_send
         result = await _standalone_send(PlatformConfig(), "not-a-number", "test")
         assert "error" in result
         assert "invalid chat_id" in result["error"]
@@ -719,7 +719,7 @@ class TestRegistration:
 
     def test_register_calls_register_platform(self, chatmail_env):
         """register() should call ctx.register_platform with correct name."""
-        from adapter import register
+        from chatmail.adapter import register
         ctx = MagicMock()
         register(ctx)
         ctx.register_platform.assert_called_once()
