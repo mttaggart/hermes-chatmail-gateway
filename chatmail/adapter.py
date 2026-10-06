@@ -24,9 +24,19 @@ import contextlib
 import datetime
 import logging
 import os
+import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional
+
+# Diagnostic flag — set HERMES_CHATMAIL_DEBUG=1 to see verbose stderr diagnostics
+# at every critical checkpoint (register, check, connect, etc).
+_DEBUG = os.environ.get("HERMES_CHATMAIL_DEBUG", "").lower() in ("1", "true", "yes")
+
+def _diag(msg: str) -> None:
+    """Print a diagnostic message to stderr, bypassing the logging system."""
+    if _DEBUG:
+        print(f"[chatmail] {msg}", file=sys.stderr, flush=True)
 
 from gateway.platforms._shared import (
     extra_or_secret,
@@ -111,8 +121,10 @@ class ChatmailAdapter(BasePlatformAdapter):
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         """Start the Delta Chat RPC server, configure the account, and begin
         listening for incoming messages."""
+        _diag(f"connect() called: addr={self._addr or '(empty)}'}, is_reconnect={is_reconnect}")
         if not self._addr or not self._password:
             logger.error("Chatmail: CHATMAIL_ADDR and CHATMAIL_PASSWORD must be configured")
+            _diag("connect: FAILED — addr or password not configured in adapter")
             return self._fail(
                 "config_missing",
                 "CHATMAIL_ADDR and CHATMAIL_PASSWORD must be set",
@@ -123,6 +135,7 @@ class ChatmailAdapter(BasePlatformAdapter):
         if not self._acquire_platform_lock(
             "chatmail", self._addr, f"Chatmail account {self._addr}"
         ):
+            _diag("connect: FAILED — platform lock not acquired")
             return False
 
         # Import deltachat2 lazily so the plugin module can be loaded
@@ -132,6 +145,7 @@ class ChatmailAdapter(BasePlatformAdapter):
             from deltachat2 import EnteredLoginParam
         except ImportError:
             logger.error("Chatmail: deltachat2 library not installed")
+            _diag("connect: FAILED — deltachat2 not importable")
             return self._fail(
                 "deps_missing",
                 "The deltachat2 package is not installed. Run: pip install 'deltachat2[full]'",
@@ -139,14 +153,18 @@ class ChatmailAdapter(BasePlatformAdapter):
             )
 
         # 1. Start the RPC server subprocess.
+        _diag(f"connect: starting RPC server (executable={self._rpc_executable}, "
+              f"accounts_dir={self._accounts_dir})")
         try:
             self._trans = IOTransport(
                 accounts_dir=self._accounts_dir,
                 rpc_executable=self._rpc_executable,
             )
             self._trans.start()
+            _diag("connect: RPC server started successfully")
         except FileNotFoundError:
             logger.error("Chatmail: deltachat-rpc-server binary not found")
+            _diag(f"connect: FAILED — {self._rpc_executable} not found")
             return self._fail(
                 "rpc_server_missing",
                 "deltachat-rpc-server not found. Install with: pip install 'deltachat2[full]'",
@@ -154,6 +172,7 @@ class ChatmailAdapter(BasePlatformAdapter):
             )
         except Exception as e:
             logger.error("Chatmail: failed to start RPC server — %s", e)
+            _diag(f"connect: FAILED — RPC start error: {e}")
             return self._fail("rpc_start_failed", str(e), retryable=True)
 
         self._rpc = Rpc(self._trans)
@@ -162,8 +181,10 @@ class ChatmailAdapter(BasePlatformAdapter):
         try:
             accounts = self._rpc.get_all_account_ids()
             self._accid = accounts[0] if accounts else self._rpc.add_account()
+            _diag(f"connect: account ready (accid={self._accid}, existing={bool(accounts)})")
         except Exception as e:
             logger.error("Chatmail: failed to get/create account — %s", e)
+            _diag(f"connect: FAILED — account error: {e}")
             await self._cleanup_transport()
             return self._fail("account_failed", str(e), retryable=True)
 
@@ -176,11 +197,14 @@ class ChatmailAdapter(BasePlatformAdapter):
                     EnteredLoginParam(addr=self._addr, password=self._password),
                 )
                 logger.info("Chatmail: configured account for %s", self._addr)
+                _diag(f"connect: account configured for {self._addr}")
             else:
                 # Ensure bot flag is set even on already-configured accounts.
                 self._rpc.set_config(self._accid, "bot", "1")
+                _diag("connect: account already configured, bot flag set")
         except Exception as e:
             logger.error("Chatmail: account configuration failed — %s", e)
+            _diag(f"connect: FAILED — configure error: {e}")
             await self._cleanup_transport()
             return self._fail("configure_failed", str(e), retryable=True)
 
@@ -203,8 +227,21 @@ class ChatmailAdapter(BasePlatformAdapter):
         # 7. Start the async drain task.
         self._drain_task = asyncio.create_task(self._drain_inbound())
 
+        # 8. Print the invite link so users can contact the bot.
+        try:
+            invite_link = self._rpc.get_chat_securejoin_qr_code(self._accid, None)
+            logger.info("Chatmail: invite link: %s", invite_link)
+            _diag(f"connect: invite link: {invite_link}")
+        except Exception as e:
+            _diag(f"connect: could not get invite link: {e}")
+
         self._mark_connected()
+        # Wire up the gateway message handler — without this, inbound
+        # messages are silently dropped (the gateway runner sets
+        # _message_handler via this call).
+        self._wire_plugin_handlers(None)
         logger.info("Chatmail: connected as %s", self._addr)
+        _diag(f"connect: SUCCESS — connected as {self._addr}")
         return True
 
     async def disconnect(self) -> None:
@@ -271,21 +308,27 @@ class ChatmailAdapter(BasePlatformAdapter):
         user message.  Pushes the message into the asyncio queue so the
         drain task can hand it to the Hermes gateway."""
         msg = event.msg
+        _diag(f"_on_new_message: id={msg.id}, chat_id={msg.chat_id}, "
+              f"from_id={msg.from_id}, text={msg.text[:80]!r}")
 
         # Redundant safety: skip self-messages and info messages
         # (the NewMessage filter already handles these, but belt-and-suspenders).
         from deltachat2 import SpecialContactId
         if msg.from_id == SpecialContactId.SELF:
+            _diag("_on_new_message: skipping self-message")
             return
         if msg.is_info:
+            _diag("_on_new_message: skipping info message")
             return
 
         # Deduplicate by Delta Chat message ID.
         if self._dedup.is_duplicate(str(msg.id)):
+            _diag(f"_on_new_message: skipping duplicate id={msg.id}")
             return
 
         # Skip empty text messages (images, files, etc. without text).
         if not msg.text or not msg.text.strip():
+            _diag(f"_on_new_message: skipping empty text message id={msg.id}")
             return
 
         # Thread-safe handoff to the asyncio event loop.
@@ -294,8 +337,11 @@ class ChatmailAdapter(BasePlatformAdapter):
                 self._loop.call_soon_threadsafe(
                     self._inbound_queue.put_nowait, msg
                 )
+                _diag(f"_on_new_message: queued message id={msg.id}")
             except RuntimeError:
-                pass  # loop closed during shutdown
+                _diag("_on_new_message: loop closed, could not queue")
+        else:
+            _diag("_on_new_message: no event loop available")
 
     # ── Inbound message dispatch ───────────────────────────────────────────
 
@@ -318,9 +364,12 @@ class ChatmailAdapter(BasePlatformAdapter):
         """Build a ``MessageEvent`` from a Delta Chat message and hand it to
         the base class handler."""
         if not self._message_handler:
+            _diag("_dispatch_message: no _message_handler set — message dropped! "
+                  "Did _wire_plugin_handlers get called?")
             return
 
         chat_id = str(msg.chat_id)
+        _diag(f"_dispatch_message: dispatching msg id={msg.id}, chat_id={chat_id}")
 
         # Determine chat type (dm vs group) from the chat metadata.
         chat_type = "dm"
@@ -358,6 +407,7 @@ class ChatmailAdapter(BasePlatformAdapter):
             timestamp=datetime.datetime.fromtimestamp(msg.timestamp),
         )
         await self.handle_message(event)
+        _diag(f"_dispatch_message: handed to handle_message, msg id={msg.id}")
 
     # ── Outbound ───────────────────────────────────────────────────────────
 
@@ -369,7 +419,9 @@ class ChatmailAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Send a text message to a Delta Chat chat."""
+        _diag(f"send: chat_id={chat_id}, content={content[:80]!r}")
         if not self._rpc or self._accid is None:
+            _diag("send: FAILED — not connected")
             return SendResult(success=False, error="Not connected")
 
         from deltachat2 import MessageData
@@ -385,9 +437,11 @@ class ChatmailAdapter(BasePlatformAdapter):
             msg_id = await asyncio.to_thread(
                 self._rpc.send_msg, self._accid, int(chat_id), data
             )
+            _diag(f"send: SUCCESS — msg_id={msg_id}")
             return SendResult(success=True, message_id=str(msg_id))
         except Exception as e:
             logger.error("Chatmail: send failed — %s", e)
+            _diag(f"send: FAILED — {e}")
             return SendResult(success=False, error=str(e))
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
@@ -420,11 +474,14 @@ def check_requirements() -> bool:
     try:
         import deltachat2  # noqa: F401
     except ImportError:
+        _diag("check_requirements: deltachat2 not importable")
         return False
-    return bool(
-        _get_scoped_secret("CHATMAIL_ADDR", "").strip()
-        and _get_scoped_secret("CHATMAIL_PASSWORD", "").strip()
-    )
+    addr = _get_scoped_secret("CHATMAIL_ADDR", "").strip()
+    password = _get_scoped_secret("CHATMAIL_PASSWORD", "").strip()
+    result = bool(addr and password)
+    _diag(f"check_requirements: addr={'(set)' if addr else '(empty)'}, "
+          f"password={'(set)' if password else '(empty)'}, result={result}")
+    return result
 
 
 def validate_config(config) -> bool:
@@ -432,7 +489,10 @@ def validate_config(config) -> bool:
     extra = getattr(config, "extra", {}) or {}
     addr = extra_or_secret(extra, "addr", "CHATMAIL_ADDR")
     password = extra_or_secret(extra, "password", "CHATMAIL_PASSWORD")
-    return bool(addr and password)
+    result = bool(addr and password)
+    _diag(f"validate_config: addr={'(set)' if addr else '(empty)'}, "
+          f"password={'(set)' if password else '(empty)'}, result={result}")
+    return result
 
 
 def is_connected(config) -> bool:
@@ -445,6 +505,7 @@ def _env_enablement() -> dict | None:
     addr = _get_scoped_secret("CHATMAIL_ADDR", "").strip()
     password = _get_scoped_secret("CHATMAIL_PASSWORD", "").strip()
     if not (addr and password):
+        _diag("_env_enablement: addr or password not set, returning None")
         return None
     seed = _seed_extra_from_env(
         (
@@ -453,7 +514,9 @@ def _env_enablement() -> dict | None:
         ),
         home_env="CHATMAIL_HOME_CHANNEL",
     )
-    return {"addr": addr, "password": password, **seed}
+    result = {"addr": addr, "password": password, **seed}
+    _diag(f"_env_enablement: returning dict with keys={list(result.keys())}")
+    return result
 
 
 def interactive_setup() -> None:
@@ -613,6 +676,7 @@ async def _standalone_send(
 
 def register(ctx):
     """Plugin entry point — called by the Hermes plugin system."""
+    _diag("register() called")
     ctx.register_platform(
         name="chatmail",
         label="Chatmail (Delta Chat)",
