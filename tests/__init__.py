@@ -1,0 +1,1 @@
+"""Test package for the Chatmail (Delta Chat) Hermes gateway plugin."""

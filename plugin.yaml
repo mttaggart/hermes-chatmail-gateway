@@ -1,0 +1,41 @@
+name: chatmail-platform
+label: Chatmail (Delta Chat)
+kind: platform
+version: 1.0.0
+description: >
+  Chatmail (Delta Chat) gateway adapter for Hermes Agent.
+  Connects Hermes to a Delta Chat account via the deltachat2 JSON-RPC
+  client library. Users chat with the bot through the Delta Chat app;
+  messages are relayed to the Hermes agent and responses are sent back
+  as Delta Chat messages.
+author: hermes-chatmail-gateway
+requires_env:
+  - name: CHATMAIL_ADDR
+    description: "Bot email address on a chatmail server (e.g. hermes-bot@nine.testrun.org)"
+    prompt: "Bot email address"
+    password: false
+  - name: CHATMAIL_PASSWORD
+    description: "Bot email/IMAP password for the chatmail account"
+    prompt: "Bot password"
+    password: true
+optional_env:
+  - name: CHATMAIL_ACCOUNTS_DIR
+    description: "Directory for the Delta Chat account database (default: ~/.hermes/chatmail-accounts)"
+    prompt: "Accounts database directory (optional)"
+    password: false
+  - name: CHATMAIL_RPC_EXECUTABLE
+    description: "Path to deltachat-rpc-server binary (default: PATH lookup)"
+    prompt: "RPC server executable (optional)"
+    password: false
+  - name: CHATMAIL_ALLOWED_USERS
+    description: "Comma-separated email addresses allowed to talk to the bot"
+    prompt: "Allowed users (comma-separated emails)"
+    password: false
+  - name: CHATMAIL_ALLOW_ALL_USERS
+    description: "Allow anyone to talk to the bot (dev only, not recommended)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: CHATMAIL_HOME_CHANNEL
+    description: "Default chat ID for cron / notification delivery"
+    prompt: "Home channel chat ID (or empty)"
+    password: false
